@@ -10,6 +10,21 @@ no-root shell access.
 
 ---
 
+## What's new in v1.1.0
+
+- **Shizuku reboot watchdog** — PulseGuard notices the moment Shizuku drops (typically after a
+  reboot) and posts a distinct **"Protection paused — Shizuku needs reactivation"** reminder that
+  deep-links to the setup wizard or opens the Shizuku app. When Shizuku returns, protection resumes
+  automatically. Home shows a prominent **Protected** vs **Protection paused** banner.
+- **Notification delivery tracker** — optionally grant Notification access and the dashboard shows
+  when each protected app **last received a notification** — your proof it's working. Privacy-first:
+  it records only the package name and time, never any notification content. Fully optional.
+- **One-tap health fixes** — the Health screen adds a **Run all checks** button and, where Shizuku
+  allows, a **Fix automatically** button that applies the fix (Doze whitelist, background execution,
+  notification permission) and re-checks on the spot.
+
+---
+
 ## How it works
 
 On a self-rescheduling exact alarm (default every 10 minutes; 5 / 10 / 15 selectable), PulseGuard
@@ -23,7 +38,9 @@ cmd app_hibernation set-state --global <pkg> false   # best-effort un-hibernate
 
 A foreground service keeps the process resident (so the Shizuku binding stays warm), while the
 `setExactAndAllowWhileIdle` alarm guarantees wake-ups even in Doze. On reboot, a
-`BOOT_COMPLETED` receiver re-arms everything.
+`BOOT_COMPLETED` receiver re-arms everything. A **watchdog** tracks Shizuku's binder in real time
+(binder-received / binder-dead listeners plus a periodic check): if it drops, PulseGuard pauses and
+reminds you; when it returns, protection resumes automatically.
 
 **Battery savers** are baked in and toggleable: skip the tick while the screen is on (default on),
 while charging (default **off** — many people charge overnight, exactly when aggressive ROMs delay
@@ -69,19 +86,26 @@ On **Home**, flip **Protection** on. Grant the notification permission and, if p
 exact-alarm permission when asked.
 
 ### 5. (Recommended) Per-app system tweaks
-The **Health** dashboard checks each app via Shizuku (battery-optimization exemption, background
-execution, notifications) and offers a **Fix** deep-link for anything that's off. On Xiaomi,
-also enable **Autostart** for each app — this can't be read by any app, so PulseGuard guides you
-to the Autostart settings rather than pretending to detect it.
+Open **Health** and tap **Run all checks**. For each app it checks (via Shizuku) the
+battery-optimization exemption, background execution, and notification state. Anything that's off
+gets a one-tap **Fix automatically** (applied via Shizuku, then re-checked) or a **Fix in Settings**
+deep-link. On Xiaomi, also enable **Autostart** for each app — this can't be read by any app, so
+PulseGuard guides you to the Autostart settings rather than pretending to detect it.
+
+### 6. (Optional) See delivery proof
+Grant **Notification access** from the Home dashboard and PulseGuard will show when each protected
+app last received a notification. It stores only the package name and time — never any content.
 
 ---
 
 ## Screens
 
-- **Home** — protection on/off, last/next pulse, quick actions, and any warnings (Shizuku down,
-  exact alarms off, no apps selected).
+- **Home** — a **Protected / Protection paused** banner, protection on/off, last/next pulse, a
+  per-app **notification-delivery** tracker ("last notification: Xm ago"), quick actions, and any
+  warnings (Shizuku down, exact alarms off, no apps selected).
 - **Apps** — pick the launchable apps to keep alive; selection is persisted.
-- **Health** — per-app green/red checks via Shizuku, with Fix deep-links; Autostart guidance.
+- **Health** — **Run all checks**, per-app green/red checks via Shizuku, one-tap **Fix
+  automatically** for shell-fixable items plus **Fix in Settings** deep-links, and Autostart guidance.
 - **Battery** — a transparent estimate of PulseGuard's own cost (pulses/day × per-pulse cost),
   plus a best-effort `dumpsys batterystats` read and a deep-link to the system battery screen.
 - **Latency** — fires a real test notification through the alarm + notification pipeline and
@@ -111,9 +135,10 @@ Clean separation across layers, single-activity + Jetpack Compose + MVVM:
 ```
 com.pulseguard
 ├─ shizuku/     IUserService.aidl, ShellUserService (Runtime.exec as shell), ShizukuManager
-├─ data/        DataStore-backed SettingsRepository, AppRepository, models
+├─ data/        DataStore-backed SettingsRepository, AppRepository, NotificationLogRepository, models
 ├─ engine/      KeepAliveService (FGS), AlarmScheduler (exact + Doze), PulseEngine (tick),
-│               PulseAlarmReceiver, BootReceiver, HealthChecker, BatteryInspector, LatencyTester
+│               PulseAlarmReceiver, BootReceiver, ShizukuWatchdog, PulseNotificationListener,
+│               HealthChecker (+ auto-fix), BatteryInspector, LatencyTester
 ├─ ui/          Compose Navigation, per-feature screens + AndroidViewModels, Material 3 theme
 └─ util/        DeepLinks (system/OEM settings), TimeFormat
 ```
@@ -147,3 +172,8 @@ Android Studio.
 PulseGuard runs entirely on-device. It has no network permission of its own, collects nothing,
 and sends nothing anywhere. Shizuku access is used only to run the keep-alive and diagnostic
 shell commands described above.
+
+The optional **notification-delivery tracker** uses a `NotificationListenerService` (which requires
+you to grant Notification access). Even then it records **only** the package name and the time a
+notification arrived for your protected apps — never the title, text, or any other content — stored
+locally in DataStore. The tracker is entirely optional; PulseGuard works fully without it.

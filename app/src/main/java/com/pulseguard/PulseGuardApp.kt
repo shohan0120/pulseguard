@@ -3,6 +3,7 @@ package com.pulseguard
 import android.app.Application
 import android.content.Context
 import com.pulseguard.data.AppRepository
+import com.pulseguard.data.NotificationLogRepository
 import com.pulseguard.data.SettingsRepository
 import com.pulseguard.engine.AlarmScheduler
 import com.pulseguard.engine.EngineStateRepository
@@ -30,6 +31,8 @@ class PulseGuardApp : Application() {
         private set
     lateinit var healthChecker: HealthChecker
         private set
+    lateinit var notificationLogRepository: NotificationLogRepository
+        private set
 
     val pulseEngine: PulseEngine by lazy {
         PulseEngine(this, settingsRepository, shizukuManager, engineStateRepository)
@@ -44,6 +47,7 @@ class PulseGuardApp : Application() {
         alarmScheduler = AlarmScheduler(this)
         shizukuManager = ShizukuManager(this).also { it.initialize() }
         healthChecker = HealthChecker(this, shizukuManager)
+        notificationLogRepository = NotificationLogRepository(this)
     }
 
     companion object {

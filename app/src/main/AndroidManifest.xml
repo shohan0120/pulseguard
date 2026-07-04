@@ -79,6 +79,19 @@
                 android:value="Periodically wakes user-selected apps via privileged shell so their push sockets reconnect, fixing delayed notifications on aggressive battery-management ROMs." />
         </service>
 
+        <!-- Optional "proof of delivery" tracker. Bound by the system only after the user grants
+             Notification Access. Records only package name + timestamp for protected apps. -->
+        <service
+            android:name=".engine.PulseNotificationListener"
+            android:enabled="true"
+            android:exported="false"
+            android:label="PulseGuard notification tracker"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <!-- Fired by our self-rescheduling exact alarm (explicit PendingIntent, not exported). -->
         <receiver
             android:name=".engine.PulseAlarmReceiver"

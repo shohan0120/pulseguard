@@ -37,6 +37,15 @@ class BootReceiver : BroadcastReceiver() {
                 // to launch a specialUse FGS from the background on Android 14+.
                 val nextTime = app.alarmScheduler.scheduleAfterBoot()
                 app.engineStateRepository.setNextTickTime(nextTime)
+
+                // Reboot recovery: Shizuku usually needs reactivation now (unless rooted). Surface
+                // the paused reminder immediately rather than waiting for the first tick.
+                app.shizukuManager.refresh()
+                if (app.shizukuManager.isReady()) {
+                    PulseNotifications.clearShizukuDown(context)
+                } else {
+                    PulseNotifications.notifyShizukuDown(context)
+                }
             } catch (t: Throwable) {
                 Log.e(TAG, "Boot re-arm failed", t)
             } finally {

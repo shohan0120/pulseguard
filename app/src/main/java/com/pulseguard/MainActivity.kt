@@ -1,6 +1,7 @@
 package com.pulseguard
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -15,7 +16,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
@@ -30,10 +33,14 @@ class MainActivity : ComponentActivity() {
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* best-effort */ }
 
+    // A one-shot route to navigate to on launch (e.g. from the "Shizuku paused" notification).
+    private var pendingRoute by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         maybeRequestNotificationPermission()
+        pendingRoute = intent?.getStringExtra(EXTRA_ROUTE)
 
         setContent {
             PulseGuardTheme {
@@ -50,12 +57,21 @@ class MainActivity : ComponentActivity() {
 
                     when (onboarded) {
                         null -> LoadingScreen()
-                        true -> PulseGuardRoot()
+                        true -> PulseGuardRoot(
+                            deepLinkRoute = pendingRoute,
+                            onDeepLinkConsumed = { pendingRoute = null },
+                        )
                         false -> OnboardingFlow()
                     }
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingRoute = intent.getStringExtra(EXTRA_ROUTE)
     }
 
     private fun maybeRequestNotificationPermission() {
@@ -68,6 +84,11 @@ class MainActivity : ComponentActivity() {
                 requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
+    }
+
+    companion object {
+        const val EXTRA_ROUTE = "com.pulseguard.extra.ROUTE"
+        const val ROUTE_SHIZUKU_WIZARD = "shizuku_wizard"
     }
 }
 

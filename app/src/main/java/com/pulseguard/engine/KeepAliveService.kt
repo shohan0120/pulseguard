@@ -33,6 +33,19 @@ class KeepAliveService : Service() {
     private val app: PulseGuardApp get() = PulseGuardApp.from(this)
     private var tickJob: Job? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        // Watch Shizuku for the service's lifetime: pause-notify on loss, auto-resume on return.
+        val locator = app
+        ShizukuWatchdog(
+            context = this,
+            shizuku = locator.shizukuManager,
+            settings = locator.settingsRepository,
+            alarmScheduler = locator.alarmScheduler,
+            onResumed = { locator.pulseEngine.runTick() },
+        ).launchIn(scope)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // startForegroundService requires startForeground() within 5s — do it first, always.
         startForegroundInternal(defaultContentText())

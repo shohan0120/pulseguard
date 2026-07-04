@@ -10,7 +10,9 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
+import androidx.core.app.NotificationManagerCompat
 import com.pulseguard.engine.FixTarget
+import com.pulseguard.engine.PulseNotificationListener
 
 /**
  * Best-effort deep links into system / OEM settings. Everything is wrapped so an unresolved
@@ -42,6 +44,29 @@ object DeepLinks {
         val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
             .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
         start(context, intent) { openAppDetails(context, packageName) }
+    }
+
+    /** True if the user has granted PulseGuard's notification listener access. */
+    fun isNotificationAccessGranted(context: Context): Boolean =
+        NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+
+    /**
+     * Opens the Notification Access screen. On API 30+ we deep-link straight to PulseGuard's own
+     * listener toggle; otherwise we fall back to the full listeners list.
+     */
+    fun openNotificationAccessSettings(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val component = ComponentName(context, PulseNotificationListener::class.java)
+            val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+                .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, component.flattenToString())
+            start(context, intent) { openNotificationAccessList(context) }
+        } else {
+            openNotificationAccessList(context)
+        }
+    }
+
+    private fun openNotificationAccessList(context: Context) {
+        start(context, Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) { openSettings(context) }
     }
 
     fun openBatteryOptimizationList(context: Context) {

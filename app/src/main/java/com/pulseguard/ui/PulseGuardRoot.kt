@@ -13,6 +13,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -35,10 +36,21 @@ import com.pulseguard.ui.settings.SettingsScreen
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PulseGuardRoot() {
+fun PulseGuardRoot(
+    deepLinkRoute: String? = null,
+    onDeepLinkConsumed: () -> Unit = {},
+) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+
+    // Handle a one-shot deep link (e.g. the "Shizuku paused" notification → setup wizard).
+    LaunchedEffect(deepLinkRoute) {
+        if (deepLinkRoute != null) {
+            navController.navigate(deepLinkRoute)
+            onDeepLinkConsumed()
+        }
+    }
 
     val showBottomBar = currentRoute in BOTTOM_BAR_ROUTES
     val onWizard = currentRoute == Routes.SHIZUKU_WIZARD

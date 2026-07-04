@@ -24,6 +24,9 @@ class PulseEngine(
         val settings = settingsRepository.snapshot()
         val now = System.currentTimeMillis()
 
+        // Keep Shizuku status current so the watchdog reacts to any change this tick surfaces.
+        shizuku.refresh()
+
         val skip = evaluateSkip(settings)
         if (skip != null) {
             return finish(TickOutcome(now, skipped = true, skipReason = skip, shizukuReady = shizuku.isReady()))
@@ -34,12 +37,11 @@ class PulseEngine(
         }
 
         if (!shizuku.isReady()) {
-            PulseNotifications.notifyShizukuDown(appContext)
+            // The ShizukuWatchdog owns the "paused" notification; just skip this tick.
             return finish(
                 TickOutcome(now, skipped = true, skipReason = "Shizuku not connected", shizukuReady = false)
             )
         }
-        PulseNotifications.clearShizukuDown(appContext)
 
         val pulsed = mutableListOf<String>()
         val failed = mutableListOf<String>()

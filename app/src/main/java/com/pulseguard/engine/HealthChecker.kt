@@ -21,6 +21,8 @@ data class HealthCheck(
     val state: CheckState,
     val detail: String,
     val fixTarget: FixTarget? = null,
+    /** True when Shizuku can apply this fix directly (see [HealthChecker.autoFix]). */
+    val autoFixable: Boolean = false,
 )
 
 data class AppHealth(
@@ -86,6 +88,7 @@ class HealthChecker(
                 "Not exempt. PulseGuard still pulses it, but a manual exemption is more reliable."
             },
             fixTarget = if (exempt) null else FixTarget.BATTERY_OPTIMIZATION,
+            autoFixable = !exempt,
         )
     }
 
@@ -109,6 +112,7 @@ class HealthChecker(
                 else -> "Couldn't read the background state."
             },
             fixTarget = if (state == CheckState.FAIL) FixTarget.APP_DETAILS else null,
+            autoFixable = state != CheckState.OK,
         )
     }
 
@@ -131,7 +135,28 @@ class HealthChecker(
                 else -> "Notification permission state is unknown (pre-Android 13 or not requested)."
             },
             fixTarget = if (state == CheckState.OK) null else FixTarget.NOTIFICATION_SETTINGS,
+            autoFixable = state != CheckState.OK,
         )
+    }
+
+    /**
+     * Applies a fix directly via the Shizuku shell, then the caller re-checks. Only the shell-
+     * fixable items are handled; Autostart is intentionally excluded (guided-only). Returns true
+     * if the command ran; the subsequent re-check is what actually confirms the new state.
+     */
+    suspend fun autoFix(packageName: String, checkId: String): Boolean {
+        if (!shizuku.isReady()) return false
+        val command = when (checkId) {
+            "battery_opt" -> "cmd deviceidle whitelist +$packageName"
+            "background" ->
+                "cmd appops set $packageName RUN_ANY_IN_BACKGROUND allow; " +
+                    "cmd appops set $packageName RUN_IN_BACKGROUND allow"
+            "notifications" ->
+                "pm grant $packageName android.permission.POST_NOTIFICATIONS 2>/dev/null; " +
+                    "cmd appops set $packageName POST_NOTIFICATION allow 2>/dev/null; true"
+            else -> return false
+        }
+        return shizuku.exec(command).isSuccess
     }
 
     private fun guidedOnly(pkg: String, label: String): AppHealth = AppHealth(

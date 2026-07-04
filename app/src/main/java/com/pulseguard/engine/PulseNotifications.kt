@@ -66,21 +66,66 @@ object PulseNotifications {
             .build()
     }
 
+    /**
+     * Distinct, high-priority "protection paused" alert, posted when Shizuku goes away (typically
+     * after a reboot). Tapping opens the in-app Shizuku setup wizard; a secondary action jumps
+     * straight to the Shizuku app so the user can restart it.
+     */
     fun notifyShizukuDown(context: Context) {
         if (!hasNotificationPermission(context)) return
-        val notification = NotificationCompat.Builder(context, CHANNEL_ALERTS)
+        val text =
+            "Shizuku isn't connected, so PulseGuard can't keep your apps awake. Tap to reopen setup, " +
+                "or restart Shizuku to resume protection."
+        val builder = NotificationCompat.Builder(context, CHANNEL_ALERTS)
             .setSmallIcon(R.drawable.ic_pulse)
-            .setContentTitle("PulseGuard needs Shizuku")
-            .setContentText("Shizuku is not connected. Ticks are paused until you reactivate it.")
-            .setAutoCancel(true)
-            .setContentIntent(openAppIntent(context))
+            .setContentTitle("PulseGuard paused — Shizuku needs reactivation")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .build()
-        NotificationManagerCompat.from(context).notify(ID_ALERT, notification)
+            .setAutoCancel(true)
+            .setContentIntent(wizardIntent(context))
+
+        shizukuLaunchIntent(context)?.let {
+            builder.addAction(R.drawable.ic_pulse, "Open Shizuku", it)
+        }
+        builder.addAction(R.drawable.ic_pulse, "Setup", wizardIntent(context))
+
+        NotificationManagerCompat.from(context).notify(ID_ALERT, builder.build())
     }
 
     fun clearShizukuDown(context: Context) {
         NotificationManagerCompat.from(context).cancel(ID_ALERT)
+    }
+
+    /** Opens the app and deep-links to the Shizuku setup wizard. */
+    private fun wizardIntent(context: Context): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = "com.pulseguard.action.OPEN_WIZARD"
+            putExtra(MainActivity.EXTRA_ROUTE, MainActivity.ROUTE_SHIZUKU_WIZARD)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        return PendingIntent.getActivity(
+            context,
+            REQ_WIZARD,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    /** Launches the installed Shizuku app, or null if it isn't installed. */
+    private fun shizukuLaunchIntent(context: Context): PendingIntent? {
+        val launch = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+            ?: return null
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return PendingIntent.getActivity(
+            context,
+            REQ_SHIZUKU,
+            launch,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     private fun openAppIntent(context: Context): PendingIntent {
@@ -94,6 +139,9 @@ object PulseNotifications {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
     }
+
+    private const val REQ_WIZARD = 200
+    private const val REQ_SHIZUKU = 201
 
     fun hasNotificationPermission(context: Context): Boolean =
         NotificationManagerCompat.from(context).areNotificationsEnabled()

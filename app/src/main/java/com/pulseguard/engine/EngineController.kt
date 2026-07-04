@@ -21,6 +21,7 @@ object EngineController {
         app.settingsRepository.setEngineEnabled(false)
         app.alarmScheduler.cancel()
         app.engineStateRepository.setNextTickTime(0L)
+        PulseNotifications.clearShizukuDown(context)
         KeepAliveService.stop(context)
     }
 

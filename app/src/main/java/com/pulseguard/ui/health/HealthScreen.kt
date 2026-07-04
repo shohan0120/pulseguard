@@ -17,12 +17,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistAddCheck
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.outlined.RocketLaunch
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -45,51 +46,73 @@ import com.pulseguard.engine.AppHealth
 import com.pulseguard.engine.CheckState
 import com.pulseguard.engine.FixTarget
 import com.pulseguard.engine.HealthCheck
-import com.pulseguard.shizuku.ShizukuStatus
 import com.pulseguard.ui.components.PulseCard
 import com.pulseguard.ui.components.StatusDot
 import com.pulseguard.ui.theme.statusColor
 import com.pulseguard.util.DeepLinks
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 data class HealthUiState(
     val loading: Boolean = true,
+    val running: Boolean = false,
     val apps: List<AppHealth> = emptyList(),
+    val fixing: Set<String> = emptySet(), // "pkg#checkId"
     val shizukuReady: Boolean = false,
     val selectedEmpty: Boolean = false,
 )
 
-@OptIn(ExperimentalCoroutinesApi::class)
 class HealthViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as PulseGuardApp
-    private val refreshTrigger = MutableStateFlow(0)
+
+    private val _apps = MutableStateFlow<List<AppHealth>>(emptyList())
+    private val _running = MutableStateFlow(true)
+    private val _fixing = MutableStateFlow<Set<String>>(emptySet())
+    private val selected =
+        app.settingsRepository.settings.map { it.selectedPackages }.distinctUntilChanged()
 
     val state: StateFlow<HealthUiState> =
-        combine(
-            app.settingsRepository.settings.map { it.selectedPackages }.distinctUntilChanged(),
-            app.shizukuManager.status,
-            refreshTrigger,
-        ) { pkgs, shizuku, _ -> pkgs to shizuku }
-            .mapLatest { (pkgs, shizuku) ->
-                if (pkgs.isEmpty()) {
-                    HealthUiState(loading = false, selectedEmpty = true, shizukuReady = shizuku.isReady)
-                } else {
-                    val results = pkgs.sorted().map { app.healthChecker.check(it) }
-                    HealthUiState(loading = false, apps = results, shizukuReady = shizuku.isReady)
-                }
-            }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HealthUiState(loading = true))
+        combine(_apps, _running, _fixing, app.shizukuManager.status, selected) { apps, running, fixing, shizuku, sel ->
+            HealthUiState(
+                loading = running && apps.isEmpty(),
+                running = running,
+                apps = apps,
+                fixing = fixing,
+                shizukuReady = shizuku.isReady,
+                selectedEmpty = sel.isEmpty(),
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HealthUiState(loading = true))
 
-    fun refresh() {
-        refreshTrigger.value += 1
+    init {
+        // Re-run checks whenever the protected-app selection changes (and once on start).
+        viewModelScope.launch { selected.collect { runAllChecks() } }
+    }
+
+    fun runAllChecks() {
+        viewModelScope.launch {
+            val pkgs = app.settingsRepository.snapshot().selectedPackages.sorted()
+            _running.value = true
+            _apps.value = pkgs.map { app.healthChecker.check(it) }
+            _running.value = false
+        }
+    }
+
+    fun autoFix(packageName: String, checkId: String) {
+        viewModelScope.launch {
+            val key = "$packageName#$checkId"
+            _fixing.update { it + key }
+            app.healthChecker.autoFix(packageName, checkId)
+            val rechecked = app.healthChecker.check(packageName)
+            _apps.update { list -> list.map { if (it.packageName == packageName) rechecked else it } }
+            _fixing.update { it - key }
+        }
     }
 }
 
@@ -102,28 +125,18 @@ fun HealthScreen(
     val context = LocalContext.current
 
     Column(Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 8.dp, top = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "Health dashboard",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    if (state.shizukuReady) "Live checks via Shizuku"
-                    else "Guided-only mode — connect Shizuku for live checks",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            IconButton(onClick = viewModel::refresh) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
-            }
+        Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp)) {
+            Text(
+                "Health check",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                if (state.shizukuReady) "Live checks & one-tap fixes via Shizuku"
+                else "Guided-only mode — connect Shizuku for live checks and auto-fixes",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         when {
@@ -136,9 +149,33 @@ fun HealthScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
+                item {
+                    FilledTonalButton(
+                        onClick = viewModel::runAllChecks,
+                        enabled = !state.running,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (state.running) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Icon(Icons.AutoMirrored.Filled.PlaylistAddCheck, contentDescription = null, modifier = Modifier.size(18.dp))
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (state.running) "Checking…" else "Run all checks")
+                    }
+                }
                 item { AutostartGuidanceCard(context) }
                 items(state.apps, key = { it.packageName }) { health ->
-                    AppHealthCard(health, context)
+                    AppHealthCard(
+                        health = health,
+                        shizukuReady = state.shizukuReady,
+                        fixing = state.fixing,
+                        onAutoFix = viewModel::autoFix,
+                        onManualFix = { target -> DeepLinks.openFixTarget(context, target, health.packageName) },
+                    )
                 }
                 item { Spacer(Modifier.height(24.dp)) }
             }
@@ -147,7 +184,13 @@ fun HealthScreen(
 }
 
 @Composable
-private fun AppHealthCard(health: AppHealth, context: android.content.Context) {
+private fun AppHealthCard(
+    health: AppHealth,
+    shizukuReady: Boolean,
+    fixing: Set<String>,
+    onAutoFix: (String, String) -> Unit,
+    onManualFix: (FixTarget) -> Unit,
+) {
     PulseCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             StatusDot(statusColor(health.overall), size = 14)
@@ -163,15 +206,25 @@ private fun AppHealthCard(health: AppHealth, context: android.content.Context) {
         }
         Spacer(Modifier.height(12.dp))
         health.checks.forEach { check ->
-            CheckRow(check) { target ->
-                DeepLinks.openFixTarget(context, target, health.packageName)
-            }
+            CheckRow(
+                check = check,
+                isFixing = fixing.contains("${health.packageName}#${check.id}"),
+                canAutoFix = shizukuReady && check.autoFixable,
+                onAutoFix = { onAutoFix(health.packageName, check.id) },
+                onManualFix = onManualFix,
+            )
         }
     }
 }
 
 @Composable
-private fun CheckRow(check: HealthCheck, onFix: (FixTarget) -> Unit) {
+private fun CheckRow(
+    check: HealthCheck,
+    isFixing: Boolean,
+    canAutoFix: Boolean,
+    onAutoFix: () -> Unit,
+    onManualFix: (FixTarget) -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
         verticalAlignment = Alignment.Top,
@@ -196,17 +249,51 @@ private fun CheckRow(check: HealthCheck, onFix: (FixTarget) -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (check.fixTarget != null) {
-                TextButton(
-                    onClick = { onFix(check.fixTarget) },
-                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
-                ) {
-                    Text("Fix")
-                    Spacer(Modifier.width(4.dp))
-                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+            if (check.state != CheckState.OK) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    when {
+                        isFixing -> {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Fixing…",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+
+                        canAutoFix -> {
+                            TextButton(
+                                onClick = onAutoFix,
+                                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                            ) {
+                                Icon(Icons.Filled.AutoFixHigh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Fix automatically")
+                            }
+                            if (check.fixTarget != null) {
+                                Spacer(Modifier.width(12.dp))
+                                ManualFixButton(check.fixTarget, onManualFix)
+                            }
+                        }
+
+                        check.fixTarget != null -> ManualFixButton(check.fixTarget, onManualFix)
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ManualFixButton(target: FixTarget, onManualFix: (FixTarget) -> Unit) {
+    TextButton(
+        onClick = { onManualFix(target) },
+        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+    ) {
+        Text("Fix in Settings")
+        Spacer(Modifier.width(4.dp))
+        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
     }
 }
 
@@ -230,15 +317,15 @@ private fun AutostartGuidanceCard(context: android.content.Context) {
                 }
                 Spacer(Modifier.width(12.dp))
                 Text(
-                    "Autostart (MIUI / HyperOS)",
+                    "Verify Autostart (MIUI / HyperOS)",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                "Autostart can't be read by any app, so we can't show a status for it. But it's the " +
-                    "single most important setting on Xiaomi devices: enable Autostart for each of your " +
+                "Autostart can't be read by any app, so we don't show a status or auto-fix it. But it's " +
+                    "the single most important setting on Xiaomi devices: enable Autostart for each of your " +
                     "selected apps, or they'll be killed regardless.",
                 style = MaterialTheme.typography.bodyMedium,
             )

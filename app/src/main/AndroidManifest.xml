@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Core engine -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Exact alarms. USE_EXACT_ALARM is auto-granted (no user prompt) and guarantees precise
+         timing, which is PulseGuard's core promise. Trade-off: Google Play restricts
+         USE_EXACT_ALARM to alarm/calendar apps — but PulseGuard is inherently a sideloaded
+         Shizuku utility (it also needs specialUse FGS + system-package queries) and cannot be
+         Play-distributed, so we prioritise reliability. SCHEDULE_EXACT_ALARM is the revocable
+         fallback; AlarmScheduler always checks canScheduleExactAlarms() and degrades gracefully. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <!-- Battery: deep-link to / request battery-optimization exemption -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Read battery/usage stats where the user grants Usage Access (appops-gated) -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- App-picker visibility + Shizuku detection + OEM autostart deep-links
+         (all needed under Android 11+ package visibility; no QUERY_ALL_PACKAGES). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- Shizuku -->
+        <package android:name="moe.shizuku.privileged.api" />
+        <!-- OEM autostart / security-center apps we deep-link into -->
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.oppo.safe" />
+        <package android:name="com.vivo.permissionmanager" />
+        <package android:name="com.letv.android.letvsafe" />
+        <package android:name="com.huawei.systemmanager" />
+    </queries>
+
+    <application
+        android:name=".PulseGuardApp"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.PulseGuard">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.PulseGuard"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- The keep-alive foreground service. specialUse: no standard FGS category fits a
+             cross-app push keep-alive utility; the subtype below states the honest purpose. -->
+        <service
+            android:name=".engine.KeepAliveService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Periodically wakes user-selected apps via privileged shell so their push sockets reconnect, fixing delayed notifications on aggressive battery-management ROMs." />
+        </service>
+
+        <!-- Fired by our self-rescheduling exact alarm (explicit PendingIntent, not exported). -->
+        <receiver
+            android:name=".engine.PulseAlarmReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <!-- Receives the notification-latency test alarm (explicit PendingIntent). -->
+        <receiver
+            android:name=".engine.LatencyAlarmReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <!-- Re-arms the alarm and restarts the service after reboot / app update. -->
+        <receiver
+            android:name=".engine.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Shizuku entry point -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL"
+            tools:ignore="ExportedContentProvider" />
+
+    </application>
+
+</manifest>

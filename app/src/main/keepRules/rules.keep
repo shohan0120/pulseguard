@@ -1,0 +1,27 @@
+# Project-specific R8 keep rules. AGP combines every file in src/main/keepRules/ and
+# passes them to R8 when minification is enabled.
+# See https://d.android.com/r/tools/r8/keep-rules
+
+# ---------------------------------------------------------------------------
+# Shizuku user service
+# ShellUserService is loaded by class name inside a SEPARATE process (app_process running
+# as the shell UID) that Shizuku spawns, and its constructors are called reflectively. The
+# AIDL IUserService/Stub is likewise used across that process boundary. Keeping the whole
+# package (name + all members) guarantees the cross-process binding keeps working after R8.
+# ---------------------------------------------------------------------------
+-keep class com.pulseguard.shizuku.** { *; }
+
+# Shizuku library itself uses reflection / hidden APIs. Its AAR normally ships consumer rules,
+# but keep + dontwarn defensively.
+-keep class rikka.** { *; }
+-keep interface rikka.** { *; }
+-dontwarn rikka.**
+-dontwarn moe.shizuku.**
+
+# ---------------------------------------------------------------------------
+# AndroidViewModels are instantiated reflectively by the default ViewModel factory, so keep
+# every ViewModel subclass constructor (incl. the (Application) constructor).
+# ---------------------------------------------------------------------------
+-keepclassmembers class * extends androidx.lifecycle.ViewModel {
+    <init>(...);
+}

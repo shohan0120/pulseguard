@@ -42,7 +42,11 @@ class KeepAliveService : Service() {
             shizuku = locator.shizukuManager,
             settings = locator.settingsRepository,
             alarmScheduler = locator.alarmScheduler,
-            onResumed = { locator.pulseEngine.runTick() },
+            onResumed = {
+                // Shizuku just came back (e.g. after a reboot): reapply lapsed protections.
+                locator.protectionMonitor.reverifyAndMaintain()
+                locator.pulseEngine.runTick()
+            },
         ).launchIn(scope)
     }
 
@@ -86,7 +90,10 @@ class KeepAliveService : Service() {
                     return@launch
                 }
                 app.engineStateRepository.setServiceRunning(true)
+                // Primary job: re-verify and maintain the readable protections. The temp-whitelist
+                // poke below is a minor supplement.
                 val outcome = app.pulseEngine.runTick()
+                app.protectionMonitor.reverifyAndMaintain()
                 updateNotification(tickContentText(settings, outcome))
             } catch (t: Throwable) {
                 Log.e(TAG, "Tick failed", t)

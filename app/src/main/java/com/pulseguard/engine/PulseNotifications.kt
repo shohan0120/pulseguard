@@ -21,6 +21,7 @@ object PulseNotifications {
     const val ID_FOREGROUND = 1001
     const val ID_ALERT = 1002
     const val ID_LATENCY = 1003
+    const val ID_PROTECTION = 1004
 
     fun ensureChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -96,6 +97,27 @@ object PulseNotifications {
 
     fun clearShizukuDown(context: Context) {
         NotificationManagerCompat.from(context).cancel(ID_ALERT)
+    }
+
+    /**
+     * Posted when the watchdog found a protection had silently lapsed (after a reboot/update) and
+     * reapplied it. Informational + high-priority; tapping opens the dashboard to review.
+     */
+    fun notifyProtectionLapsed(context: Context, appLabels: List<String>) {
+        if (!hasNotificationPermission(context)) return
+        if (appLabels.isEmpty()) return
+        val names = appLabels.joinToString(", ")
+        val text = "PulseGuard reapplied protection for $names after a setting lapsed. Tap to review."
+        val notification = NotificationCompat.Builder(context, CHANNEL_ALERTS)
+            .setSmallIcon(R.drawable.ic_pulse)
+            .setContentTitle("Protection restored")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(openAppIntent(context))
+            .build()
+        NotificationManagerCompat.from(context).notify(ID_PROTECTION, notification)
     }
 
     /** Opens the app and deep-links to the Shizuku setup wizard. */

@@ -1,9 +1,10 @@
 package com.pulseguard.data
 
-/** All user-tunable configuration for the keep-alive engine, as one immutable snapshot. */
+/** All user-tunable configuration for the background maintenance service, as one snapshot. */
 data class PulseSettings(
+    /** Whether the background maintenance service (watchdog + periodic re-verify + light poke) runs. */
     val engineEnabled: Boolean = false,
-    /** Base tick interval. UI restricts this to [INTERVAL_OPTIONS]. */
+    /** How often the background service re-verifies protections. UI restricts to [INTERVAL_OPTIONS]. */
     val intervalMinutes: Int = DEFAULT_INTERVAL_MINUTES,
     val selectedPackages: Set<String> = emptySet(),
 
@@ -35,7 +36,7 @@ data class PulseSettings(
 
     companion object {
         val INTERVAL_OPTIONS = listOf(5, 10, 15)
-        const val DEFAULT_INTERVAL_MINUTES = 10
+        const val DEFAULT_INTERVAL_MINUTES = 15
         const val DEFAULT_NIGHT_START = 23
         const val DEFAULT_NIGHT_END = 7
         const val DEFAULT_WHITELIST_SECONDS = 60

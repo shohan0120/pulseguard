@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -79,6 +80,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 fun SettingsScreen(
     onOpenApps: () -> Unit,
     onOpenWizard: () -> Unit,
+    onOpenLimitations: () -> Unit,
     viewModel: SettingsViewModel = viewModel(),
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -94,10 +96,11 @@ fun SettingsScreen(
         Text("Settings", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 
         PulseCard {
-            SectionLabel("Pulse interval")
+            SectionLabel("Re-verify interval")
             Spacer(Modifier.height(10.dp))
             Text(
-                "How often PulseGuard wakes your apps. Shorter is more reliable but uses a little more battery.",
+                "How often the background service re-checks and reapplies your protections. This is " +
+                    "maintenance — the per-app OS settings are the actual fix.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -149,10 +152,11 @@ fun SettingsScreen(
         }
 
         PulseCard {
-            SectionLabel("Reconnect window")
+            SectionLabel("Background poke (supplement)")
             Spacer(Modifier.height(10.dp))
             Text(
-                "How long each app is temp-whitelisted per pulse to reconnect its push socket.",
+                "Each cycle also briefly temp-whitelists your apps. It's a minor supplement, not the " +
+                    "fix — this is how long each app gets.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -169,6 +173,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(4.dp))
             NavRow(Icons.Outlined.Apps, "Selected apps", "${s.selectedPackages.size} chosen", onOpenApps)
             NavRow(Icons.Outlined.Shield, "Shizuku setup", "Connect or re-check access", onOpenWizard)
+            NavRow(Icons.Outlined.Info, "How PulseGuard works", "What it can and can't do", onOpenLimitations)
         }
         Spacer(Modifier.height(24.dp))
     }

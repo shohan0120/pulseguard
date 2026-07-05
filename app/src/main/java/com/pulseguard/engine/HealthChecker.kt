@@ -1,18 +1,20 @@
 package com.pulseguard.engine
 
 import android.content.Context
+import android.os.Build
 import com.pulseguard.data.AppRepository
 import com.pulseguard.shizuku.ShizukuManager
 
-/** Traffic-light state for a single health check. */
-enum class CheckState { OK, WARN, FAIL, UNKNOWN }
+/** Traffic-light state for a single protection layer. MANUAL = can't be read, user must verify. */
+enum class CheckState { OK, WARN, FAIL, UNKNOWN, MANUAL }
 
-/** Where a "Fix" button should deep-link the user. Resolved to an Intent by DeepLinks. */
+/** Where a "Fix"/"Verify" button should deep-link the user. Resolved to an Intent by DeepLinks. */
 enum class FixTarget {
     BATTERY_OPTIMIZATION,
     APP_DETAILS,
     NOTIFICATION_SETTINGS,
     AUTOSTART,
+    OTHER_PERMISSIONS,
 }
 
 data class HealthCheck(
@@ -23,7 +25,10 @@ data class HealthCheck(
     val fixTarget: FixTarget? = null,
     /** True when Shizuku can apply this fix directly (see [HealthChecker.autoFix]). */
     val autoFixable: Boolean = false,
-)
+) {
+    /** A layer we can't read and can only ask the user to verify manually (e.g. MIUI Autostart). */
+    val isManual: Boolean get() = state == CheckState.MANUAL
+}
 
 data class AppHealth(
     val packageName: String,
@@ -31,28 +36,40 @@ data class AppHealth(
     val checks: List<HealthCheck>,
     val shizukuBacked: Boolean,
 ) {
+    private val readable get() = checks.filter { !it.isManual }
+
+    /** Overall status ignores manual (unreadable) layers — they can't make an app "red". */
     val overall: CheckState
         get() = when {
-            checks.any { it.state == CheckState.FAIL } -> CheckState.FAIL
-            checks.any { it.state == CheckState.WARN } -> CheckState.WARN
-            checks.any { it.state == CheckState.UNKNOWN } -> CheckState.UNKNOWN
+            readable.any { it.state == CheckState.FAIL } -> CheckState.FAIL
+            readable.any { it.state == CheckState.WARN } -> CheckState.WARN
+            readable.any { it.state == CheckState.UNKNOWN } -> CheckState.UNKNOWN
+            readable.isEmpty() -> CheckState.UNKNOWN
             else -> CheckState.OK
         }
+
+    /** No readable protection is failing. Used by the watchdog to detect regressions. */
+    val readableHealthy: Boolean get() = readable.none { it.state == CheckState.FAIL }
 }
 
 /**
- * Runs the read-only, per-app diagnostics via Shizuku shell. Everything degrades to an
- * UNKNOWN "guided-only" check when Shizuku is unavailable, and every non-OK check offers a
- * deep-link so the user can fix it manually.
+ * Reads the per-app protection layers PulseGuard can (via Shizuku shell) and lists the ones it
+ * cannot as manual "verify" steps. Everything degrades to a guided-only view without Shizuku.
  *
- * Honesty note: MIUI/HyperOS "Autostart" is intentionally NOT probed here — it isn't reliably
- * readable via any API — so it is surfaced as a guided step on the dashboard instead.
+ * Honesty: MIUI/HyperOS Autostart, background pop-up, and per-app battery keep-alive are NOT
+ * readable via any API, so they are presented as manual verify steps — never as a detected state.
  */
 class HealthChecker(
     context: Context,
     private val shizuku: ShizukuManager,
 ) {
     private val appRepository = AppRepository(context)
+
+    private val isMiui: Boolean by lazy {
+        val brand = Build.BRAND.lowercase()
+        val manufacturer = Build.MANUFACTURER.lowercase()
+        "xiaomi" in manufacturer || "xiaomi" in brand || "redmi" in brand || "poco" in brand
+    }
 
     suspend fun check(packageName: String, label: String? = null): AppHealth {
         val name = label ?: appRepository.labelFor(packageName)
@@ -65,19 +82,15 @@ class HealthChecker(
                 checkBatteryOptimization(packageName),
                 checkBackgroundExecution(packageName),
                 checkNotifications(packageName),
-            ),
+            ) + manualLayers(),
             shizukuBacked = true,
         )
     }
 
     private suspend fun checkBatteryOptimization(pkg: String): HealthCheck {
         val result = shizuku.exec("dumpsys deviceidle whitelist")
-        // Lines look like "system,com.foo,10012" / "user,com.bar,10234"; match an exact
-        // comma-delimited field to avoid substring false-positives (e.g. com.foo vs org.com.foo).
         val exempt = result.isSuccess &&
-            result.output.lineSequence().any { line ->
-                line.split(',').any { it.trim() == pkg }
-            }
+            result.output.lineSequence().any { line -> line.split(',').any { it.trim() == pkg } }
         return HealthCheck(
             id = "battery_opt",
             label = "Battery optimization",
@@ -85,7 +98,7 @@ class HealthChecker(
             detail = if (exempt) {
                 "Exempt from Doze — allowed to run in the background."
             } else {
-                "Not exempt. PulseGuard still pulses it, but a manual exemption is more reliable."
+                "Not exempt from Doze. Add it so the system stops deferring its background work."
             },
             fixTarget = if (exempt) null else FixTarget.BATTERY_OPTIMIZATION,
             autoFixable = !exempt,
@@ -107,7 +120,7 @@ class HealthChecker(
             label = "Background execution",
             state = state,
             detail = when (state) {
-                CheckState.FAIL -> "Background is restricted — notifications will be delayed or dropped."
+                CheckState.FAIL -> "Background is restricted — its push connection will be killed."
                 CheckState.OK -> "Background execution is allowed."
                 else -> "Couldn't read the background state."
             },
@@ -139,10 +152,39 @@ class HealthChecker(
         )
     }
 
+    /** Layers that no app can read — presented as manual verify steps, never as a detected state. */
+    private fun manualLayers(): List<HealthCheck> = if (isMiui) {
+        listOf(
+            HealthCheck(
+                "autostart", "Autostart", CheckState.MANUAL,
+                "Can't be read on MIUI. Verify Autostart is ON — otherwise the app is killed regardless.",
+                FixTarget.AUTOSTART,
+            ),
+            HealthCheck(
+                "background_popup", "Background pop-up", CheckState.MANUAL,
+                "In Other permissions, allow \"Display pop-up windows while running in the background\".",
+                FixTarget.OTHER_PERMISSIONS,
+            ),
+            HealthCheck(
+                "battery_saver", "Battery saver", CheckState.MANUAL,
+                "Set this app's battery saver to \"No restrictions\".",
+                FixTarget.APP_DETAILS,
+            ),
+        )
+    } else {
+        listOf(
+            HealthCheck(
+                "battery_unrestricted", "Battery restriction", CheckState.MANUAL,
+                "Verify this app is set to Unrestricted in its battery settings.",
+                FixTarget.APP_DETAILS,
+            ),
+        )
+    }
+
     /**
      * Applies a fix directly via the Shizuku shell, then the caller re-checks. Only the shell-
-     * fixable items are handled; Autostart is intentionally excluded (guided-only). Returns true
-     * if the command ran; the subsequent re-check is what actually confirms the new state.
+     * fixable readable layers are handled; manual layers return false. The re-check confirms the
+     * new state.
      */
     suspend fun autoFix(packageName: String, checkId: String): Boolean {
         if (!shizuku.isReady()) return false
@@ -176,6 +218,6 @@ class HealthChecker(
                 "notifications", "Notifications", CheckState.UNKNOWN,
                 "Connect Shizuku to auto-check, or verify notifications are on.", FixTarget.NOTIFICATION_SETTINGS,
             ),
-        ),
+        ) + manualLayers(),
     )
 }

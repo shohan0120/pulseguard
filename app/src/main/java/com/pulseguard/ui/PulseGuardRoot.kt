@@ -24,15 +24,15 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.pulseguard.ui.apps.AppPickerScreen
 import com.pulseguard.ui.battery.BatteryScreen
-import com.pulseguard.ui.health.HealthScreen
 import com.pulseguard.ui.home.HomeScreen
 import com.pulseguard.ui.latency.LatencyScreen
+import com.pulseguard.ui.limitations.LimitationsScreen
 import com.pulseguard.ui.onboarding.ShizukuWizardScreen
 import com.pulseguard.ui.settings.SettingsScreen
 
 /**
- * The main app shell (shown after onboarding). Start destination is fixed to Home so the
- * bottom-nav back-stack behaves predictably; onboarding is gated ahead of this by MainActivity.
+ * The main app shell (shown after onboarding). Home is the Protection dashboard; secondary
+ * screens (battery, latency, limitations, wizard) are pushed with a back bar.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,7 +44,6 @@ fun PulseGuardRoot(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
-    // Handle a one-shot deep link (e.g. the "Shizuku paused" notification → setup wizard).
     LaunchedEffect(deepLinkRoute) {
         if (deepLinkRoute != null) {
             navController.navigate(deepLinkRoute)
@@ -52,16 +51,20 @@ fun PulseGuardRoot(
         }
     }
 
+    val backBarTitles = mapOf(
+        Routes.SHIZUKU_WIZARD to "Shizuku setup",
+        Routes.BATTERY to "Battery cost",
+        Routes.LATENCY to "Latency test",
+        Routes.LIMITATIONS to "How PulseGuard works",
+    )
     val showBottomBar = currentRoute in BOTTOM_BAR_ROUTES
-    val onWizard = currentRoute == Routes.SHIZUKU_WIZARD
-    val onLatency = currentRoute == Routes.LATENCY
-    val showBackBar = onWizard || onLatency
+    val backBarTitle = backBarTitles[currentRoute]
 
     Scaffold(
         topBar = {
-            if (showBackBar) {
+            if (backBarTitle != null) {
                 CenterAlignedTopAppBar(
-                    title = { Text(if (onLatency) "Latency test" else "Shizuku setup") },
+                    title = { Text(backBarTitle) },
                     navigationIcon = {
                         IconButton(onClick = { navController.popBackStack() }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -84,22 +87,21 @@ fun PulseGuardRoot(
             composable(Routes.HOME) {
                 HomeScreen(
                     onOpenWizard = { navController.navigate(Routes.SHIZUKU_WIZARD) },
-                    onOpenHealth = { navController.navigateTab(Routes.HEALTH) },
-                    onOpenBattery = { navController.navigateTab(Routes.BATTERY) },
-                    onOpenLatency = { navController.navigate(Routes.LATENCY) },
                     onOpenApps = { navController.navigateTab(Routes.APPS) },
+                    onOpenBattery = { navController.navigate(Routes.BATTERY) },
+                    onOpenLatency = { navController.navigate(Routes.LATENCY) },
+                    onOpenLimitations = { navController.navigate(Routes.LIMITATIONS) },
                 )
             }
             composable(Routes.APPS) { AppPickerScreen() }
-            composable(Routes.HEALTH) {
-                HealthScreen(onOpenApps = { navController.navigateTab(Routes.APPS) })
-            }
             composable(Routes.BATTERY) { BatteryScreen() }
             composable(Routes.LATENCY) { LatencyScreen() }
+            composable(Routes.LIMITATIONS) { LimitationsScreen() }
             composable(Routes.SETTINGS) {
                 SettingsScreen(
                     onOpenApps = { navController.navigateTab(Routes.APPS) },
                     onOpenWizard = { navController.navigate(Routes.SHIZUKU_WIZARD) },
+                    onOpenLimitations = { navController.navigate(Routes.LIMITATIONS) },
                 )
             }
             composable(Routes.SHIZUKU_WIZARD) {

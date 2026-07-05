@@ -4,10 +4,12 @@ import android.app.Application
 import android.content.Context
 import com.pulseguard.data.AppRepository
 import com.pulseguard.data.NotificationLogRepository
+import com.pulseguard.data.ProtectionStateRepository
 import com.pulseguard.data.SettingsRepository
 import com.pulseguard.engine.AlarmScheduler
 import com.pulseguard.engine.EngineStateRepository
 import com.pulseguard.engine.HealthChecker
+import com.pulseguard.engine.ProtectionMonitor
 import com.pulseguard.engine.PulseEngine
 import com.pulseguard.engine.PulseNotifications
 import com.pulseguard.shizuku.ShizukuManager
@@ -33,9 +35,15 @@ class PulseGuardApp : Application() {
         private set
     lateinit var notificationLogRepository: NotificationLogRepository
         private set
+    lateinit var protectionStateRepository: ProtectionStateRepository
+        private set
 
     val pulseEngine: PulseEngine by lazy {
         PulseEngine(this, settingsRepository, shizukuManager, engineStateRepository)
+    }
+
+    val protectionMonitor: ProtectionMonitor by lazy {
+        ProtectionMonitor(this, healthChecker, settingsRepository, protectionStateRepository, shizukuManager)
     }
 
     override fun onCreate() {
@@ -48,6 +56,7 @@ class PulseGuardApp : Application() {
         shizukuManager = ShizukuManager(this).also { it.initialize() }
         healthChecker = HealthChecker(this, shizukuManager)
         notificationLogRepository = NotificationLogRepository(this)
+        protectionStateRepository = ProtectionStateRepository(this)
     }
 
     companion object {

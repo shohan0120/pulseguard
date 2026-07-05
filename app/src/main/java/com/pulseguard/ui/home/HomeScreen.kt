@@ -6,32 +6,39 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.automirrored.filled.PlaylistAddCheck
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.outlined.BatteryChargingFull
-import androidx.compose.material.icons.outlined.HealthAndSafety
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.NetworkPing
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,66 +57,103 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pulseguard.PulseGuardApp
 import com.pulseguard.data.PulseSettings
+import com.pulseguard.engine.AppHealth
+import com.pulseguard.engine.CheckState
 import com.pulseguard.engine.EngineController
 import com.pulseguard.engine.EngineState
+import com.pulseguard.engine.FixTarget
+import com.pulseguard.engine.HealthCheck
 import com.pulseguard.shizuku.ShizukuStatus
-import com.pulseguard.ui.components.LabeledValue
 import com.pulseguard.ui.components.PulseCard
-import com.pulseguard.ui.components.SectionLabel
+import com.pulseguard.ui.components.StatusDot
 import com.pulseguard.ui.theme.failColor
 import com.pulseguard.ui.theme.okColor
+import com.pulseguard.ui.theme.statusColor
 import com.pulseguard.util.DeepLinks
 import com.pulseguard.util.TimeFormat
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-data class ProtectedAppStatus(
-    val packageName: String,
-    val label: String,
+data class AppProtection(
+    val health: AppHealth,
     val lastNotification: Long?,
 )
 
-data class HomeUiState(
+data class DashboardUiState(
     val settings: PulseSettings,
-    val engineState: EngineState,
     val shizukuStatus: ShizukuStatus,
-    val protectedApps: List<ProtectedAppStatus>,
+    val engineState: EngineState,
+    val apps: List<AppProtection>,
+    val checking: Boolean,
+    val fixing: Set<String>,
 )
 
-private data class HomeInputs(
+private data class ReactiveInputs(
     val settings: PulseSettings,
-    val engineState: EngineState,
     val shizukuStatus: ShizukuStatus,
+    val engineState: EngineState,
     val lastSeen: Map<String, Long>,
 )
 
-@OptIn(ExperimentalCoroutinesApi::class)
-class HomeViewModel(application: Application) : AndroidViewModel(application) {
+class DashboardViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as PulseGuardApp
 
-    val uiState: StateFlow<HomeUiState?> =
-        combine(
-            app.settingsRepository.settings,
-            app.engineStateRepository.state,
-            app.shizukuManager.status,
-            app.notificationLogRepository.lastSeen,
-        ) { settings, engine, shizuku, lastSeen ->
-            HomeInputs(settings, engine, shizuku, lastSeen)
-        }.mapLatest { input ->
-            val apps = input.settings.selectedPackages
-                .map { pkg -> ProtectedAppStatus(pkg, app.appRepository.labelFor(pkg), input.lastSeen[pkg]) }
-                .sortedBy { it.label.lowercase() }
-            HomeUiState(input.settings, input.engineState, input.shizukuStatus, apps)
-        }
-            .flowOn(Dispatchers.Default)
+    private val _health = MutableStateFlow<List<AppHealth>>(emptyList())
+    private val _checking = MutableStateFlow(true)
+    private val _fixing = MutableStateFlow<Set<String>>(emptySet())
+    private val selected =
+        app.settingsRepository.settings.map { it.selectedPackages }.distinctUntilChanged()
+
+    private val reactive = combine(
+        app.settingsRepository.settings,
+        app.shizukuManager.status,
+        app.engineStateRepository.state,
+        app.notificationLogRepository.lastSeen,
+    ) { s, sh, e, seen -> ReactiveInputs(s, sh, e, seen) }
+
+    val uiState: StateFlow<DashboardUiState?> =
+        combine(reactive, _health, _checking, _fixing) { r, health, checking, fixing ->
+            val apps = r.settings.selectedPackages.sorted().map { pkg ->
+                val h = health.find { it.packageName == pkg }
+                    ?: AppHealth(pkg, app.appRepository.labelFor(pkg), emptyList(), false)
+                AppProtection(h, r.lastSeen[pkg])
+            }
+            DashboardUiState(r.settings, r.shizukuStatus, r.engineState, apps, checking, fixing)
+        }.flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    init {
+        viewModelScope.launch { selected.collect { runAllChecks() } }
+    }
+
+    fun runAllChecks() {
+        viewModelScope.launch {
+            val pkgs = app.settingsRepository.snapshot().selectedPackages.sorted()
+            _checking.value = true
+            _health.value = pkgs.map { app.healthChecker.check(it) }
+            _checking.value = false
+        }
+    }
+
+    fun autoFix(packageName: String, checkId: String) {
+        viewModelScope.launch {
+            val key = "$packageName#$checkId"
+            _fixing.update { it + key }
+            app.healthChecker.autoFix(packageName, checkId)
+            val rechecked = app.healthChecker.check(packageName)
+            _health.update { list -> list.map { if (it.packageName == packageName) rechecked else it } }
+            _fixing.update { it - key }
+        }
+    }
 
     fun setEngineEnabled(enabled: Boolean) {
         viewModelScope.launch {
@@ -117,110 +161,122 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun pulseNow() = EngineController.pulseNow(app)
     fun refreshShizuku() = app.shizukuManager.refresh()
-    fun canScheduleExact(): Boolean = app.alarmScheduler.canScheduleExact()
     fun isNotificationAccessGranted(): Boolean = DeepLinks.isNotificationAccessGranted(app)
 }
 
 @Composable
 fun HomeScreen(
     onOpenWizard: () -> Unit,
-    onOpenHealth: () -> Unit,
+    onOpenApps: () -> Unit,
     onOpenBattery: () -> Unit,
     onOpenLatency: () -> Unit,
-    onOpenApps: () -> Unit,
-    viewModel: HomeViewModel = viewModel(),
+    onOpenLimitations: () -> Unit,
+    viewModel: DashboardViewModel = viewModel(),
 ) {
     val context = LocalContext.current
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    // Re-check host-controlled states on resume (returning from Settings / Shizuku / access screen).
-    var exactAlarmOk by remember { mutableStateOf(viewModel.canScheduleExact()) }
     var notifAccess by remember { mutableStateOf(viewModel.isNotificationAccessGranted()) }
     LifecycleResumeEffect(Unit) {
         viewModel.refreshShizuku()
-        exactAlarmOk = viewModel.canScheduleExact()
         notifAccess = viewModel.isNotificationAccessGranted()
         onPauseOrDispose { }
     }
 
     val ui = state ?: return
+    val shizukuReady = ui.shizukuStatus == ShizukuStatus.READY
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
-            .padding(bottom = 24.dp),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Spacer(Modifier.height(4.dp))
-        Text("PulseGuard", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(
-            "Keeps your important apps reachable so notifications arrive on time.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        HeroCard(
-            enabled = ui.settings.engineEnabled,
-            shizukuReady = ui.shizukuStatus == ShizukuStatus.READY,
-            selectedCount = ui.settings.selectedPackages.size,
-            intervalMinutes = ui.settings.intervalMinutes,
-            onToggle = viewModel::setEngineEnabled,
-            onPulseNow = viewModel::pulseNow,
-            onReactivate = onOpenWizard,
-        )
-
-        // Detailed guidance when Shizuku isn't ready (install / start / grant).
-        if (ui.shizukuStatus != ShizukuStatus.READY) {
-            ShizukuWarningCard(ui.shizukuStatus, onOpenWizard)
-        }
-
-        if (!exactAlarmOk) {
-            ExactAlarmWarningCard(onOpenWizard)
-        }
-
-        if (ui.settings.selectedPackages.isEmpty()) {
-            EmptySelectionCard(onOpenApps)
-        } else {
-            DeliverySection(
-                apps = ui.protectedApps,
-                notificationAccess = notifAccess,
-                onEnableAccess = { DeepLinks.openNotificationAccessSettings(context) },
+        item {
+            Text("Protection", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "The real fix is your per-app system settings. PulseGuard keeps them in place and " +
+                    "warns you when they lapse.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
-        StatusCard(ui.engineState, ui.settings)
+        item {
+            StatusCard(
+                enabled = ui.settings.engineEnabled,
+                shizukuReady = shizukuReady,
+                appCount = ui.settings.selectedPackages.size,
+                onToggle = viewModel::setEngineEnabled,
+                onReactivate = onOpenWizard,
+            )
+        }
 
-        QuickActions(
-            onOpenHealth = onOpenHealth,
-            onOpenBattery = onOpenBattery,
-            onOpenLatency = onOpenLatency,
-        )
+        if (!shizukuReady) {
+            item { ShizukuWarningCard(ui.shizukuStatus, onOpenWizard) }
+        }
+
+        if (ui.settings.selectedPackages.isEmpty()) {
+            item { EmptySelectionCard(onOpenApps) }
+        } else {
+            if (!notifAccess) {
+                item {
+                    NotificationAccessCard(onEnable = { DeepLinks.openNotificationAccessSettings(context) })
+                }
+            }
+            item {
+                FilledTonalButton(
+                    onClick = viewModel::runAllChecks,
+                    enabled = !ui.checking,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (ui.checking) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.AutoMirrored.Filled.PlaylistAddCheck, contentDescription = null, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (ui.checking) "Checking…" else "Run all checks")
+                }
+            }
+            items(ui.apps, key = { it.health.packageName }) { protection ->
+                AppProtectionCard(
+                    protection = protection,
+                    shizukuReady = shizukuReady,
+                    showLastNotification = notifAccess,
+                    fixing = ui.fixing,
+                    onAutoFix = viewModel::autoFix,
+                    onFix = { target, pkg -> DeepLinks.openFixTarget(context, target, pkg) },
+                )
+            }
+        }
+
+        item { LimitationsLink(onOpenLimitations) }
+        item {
+            QuickActions(onOpenBattery = onOpenBattery, onOpenLatency = onOpenLatency)
+        }
+        item { Spacer(Modifier.height(12.dp)) }
     }
 }
 
 @Composable
-private fun HeroCard(
+private fun StatusCard(
     enabled: Boolean,
     shizukuReady: Boolean,
-    selectedCount: Int,
-    intervalMinutes: Int,
+    appCount: Int,
     onToggle: (Boolean) -> Unit,
-    onPulseNow: () -> Unit,
     onReactivate: () -> Unit,
 ) {
     val paused = enabled && !shizukuReady
-    val protected = enabled && shizukuReady
-    val targetAccent = when {
-        protected -> okColor()
-        paused -> failColor()
-        else -> MaterialTheme.colorScheme.outline
-    }
-    val accent by animateColorAsState(targetAccent, label = "accent")
-
+    val active = enabled && shizukuReady
+    val accent by animateColorAsState(
+        when {
+            active -> okColor()
+            paused -> failColor()
+            else -> MaterialTheme.colorScheme.outline
+        },
+        label = "accent",
+    )
     PulseCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -237,8 +293,8 @@ private fun HeroCard(
                 Text(
                     when {
                         paused -> "Protection paused"
-                        protected -> "Protected"
-                        else -> "Protection is off"
+                        active -> "Protected"
+                        else -> "Maintenance off"
                     },
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
@@ -247,8 +303,8 @@ private fun HeroCard(
                 Text(
                     when {
                         paused -> "Shizuku needs reactivation"
-                        protected -> "$selectedCount app${plural(selectedCount)} · every $intervalMinutes min"
-                        else -> "Toggle on to start protecting apps"
+                        active -> "Maintaining $appCount app${plural(appCount)} in the background"
+                        else -> "Background watchdog & re-verify are off"
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -256,33 +312,132 @@ private fun HeroCard(
             }
             Switch(checked = enabled, onCheckedChange = onToggle)
         }
-        when {
-            paused -> {
-                Spacer(Modifier.height(16.dp))
-                Button(onClick = onReactivate, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Outlined.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Reactivate Shizuku")
-                }
-            }
-            protected -> {
-                Spacer(Modifier.height(16.dp))
-                OutlinedButton(onClick = onPulseNow, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Filled.Bolt, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Pulse now")
-                }
+        if (paused) {
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = onReactivate, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Reactivate Shizuku")
             }
         }
     }
 }
 
 @Composable
-private fun DeliverySection(
-    apps: List<ProtectedAppStatus>,
-    notificationAccess: Boolean,
-    onEnableAccess: () -> Unit,
+private fun AppProtectionCard(
+    protection: AppProtection,
+    shizukuReady: Boolean,
+    showLastNotification: Boolean,
+    fixing: Set<String>,
+    onAutoFix: (String, String) -> Unit,
+    onFix: (FixTarget, String) -> Unit,
 ) {
+    val health = protection.health
+    PulseCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StatusDot(statusColor(health.overall), size = 14)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(health.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                if (showLastNotification) {
+                    Text(
+                        "Last notification: " +
+                            (protection.lastNotification?.let { TimeFormat.relative(it) } ?: "none yet"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        health.checks.forEach { check ->
+            LayerRow(
+                check = check,
+                packageName = health.packageName,
+                shizukuReady = shizukuReady,
+                isFixing = fixing.contains("${health.packageName}#${check.id}"),
+                onAutoFix = { onAutoFix(health.packageName, check.id) },
+                onFix = { target -> onFix(target, health.packageName) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun LayerRow(
+    check: HealthCheck,
+    packageName: String,
+    shizukuReady: Boolean,
+    isFixing: Boolean,
+    onAutoFix: () -> Unit,
+    onFix: (FixTarget) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(modifier = Modifier.padding(top = 5.dp)) {
+            StatusDot(statusColor(check.state), size = 10)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(check.label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    stateWord(check.state),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = statusColor(check.state),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Text(
+                check.detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            when {
+                check.isManual && check.fixTarget != null ->
+                    ActionButton("Verify", Icons.AutoMirrored.Outlined.OpenInNew) { onFix(check.fixTarget) }
+
+                check.state == CheckState.OK -> Unit
+
+                isFixing -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Fixing…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+
+                shizukuReady && check.autoFixable -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    ActionButton("Fix automatically", Icons.Filled.AutoFixHigh, onClick = onAutoFix)
+                    if (check.fixTarget != null) {
+                        Spacer(Modifier.width(10.dp))
+                        ActionButton("Fix in Settings", Icons.AutoMirrored.Outlined.OpenInNew) { onFix(check.fixTarget) }
+                    }
+                }
+
+                check.fixTarget != null ->
+                    ActionButton("Fix in Settings", Icons.AutoMirrored.Outlined.OpenInNew) { onFix(check.fixTarget) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActionButton(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+) {
+    TextButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(label)
+    }
+}
+
+@Composable
+private fun NotificationAccessCard(onEnable: () -> Unit) {
     PulseCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
@@ -292,78 +447,51 @@ private fun DeliverySection(
                 modifier = Modifier.size(20.dp),
             )
             Spacer(Modifier.width(8.dp))
-            SectionLabel("Notification delivery")
+            Text("Delivery proof (optional)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Grant Notification access and each app below will show when it last received a " +
+                "notification — package name and time only, never any content.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
+        FilledTonalButton(onClick = onEnable) { Text("Enable notification access") }
+    }
+}
 
-        if (!notificationAccess) {
-            Text(
-                "See proof that notifications are actually arriving. Grant Notification access and " +
-                    "PulseGuard will show when each protected app last received one (package + time only — " +
-                    "never any content).",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            FilledTonalButton(onClick = onEnableAccess) { Text("Enable notification access") }
-        } else {
-            apps.forEach { appStatus ->
-                LabeledValue(
-                    label = appStatus.label,
-                    value = appStatus.lastNotification?.let { "${TimeFormat.relative(it)}" } ?: "none yet",
-                    valueColor = if (appStatus.lastNotification == null) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
+@Composable
+private fun LimitationsLink(onOpen: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onOpen,
+    ) {
+        Row(
+            modifier = Modifier.padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Outlined.Info, contentDescription = null)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("How PulseGuard works — and its limits", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "What a no-root app can and can't do on HyperOS.",
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Last notification received per app.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
 
 @Composable
-private fun StatusCard(engine: EngineState, settings: PulseSettings) {
-    PulseCard {
-        SectionLabel("Activity")
-        Spacer(Modifier.height(10.dp))
-        LabeledValue(
-            "Last pulse",
-            if (engine.hasRun) {
-                if (engine.lastTickSkipped) "${TimeFormat.relative(engine.lastTickTime)} (skipped)"
-                else TimeFormat.relative(engine.lastTickTime)
-            } else "—",
-        )
-        LabeledValue(
-            "Next pulse",
-            if (settings.engineEnabled && engine.nextTickTime > 0) {
-                TimeFormat.relative(engine.nextTickTime)
-            } else "—",
-        )
-        LabeledValue("Apps protected", settings.selectedPackages.size.toString())
-        LabeledValue("Total pulses", engine.totalTicks.toString())
-        if (engine.lastError.isNotEmpty()) {
-            LabeledValue("Last error", engine.lastError, valueColor = MaterialTheme.colorScheme.error)
-        }
-    }
-}
-
-@Composable
-private fun QuickActions(
-    onOpenHealth: () -> Unit,
-    onOpenBattery: () -> Unit,
-    onOpenLatency: () -> Unit,
-) {
+private fun QuickActions(onOpenBattery: () -> Unit, onOpenLatency: () -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        QuickAction(Icons.Outlined.HealthAndSafety, "Health", Modifier.weight(1f), onOpenHealth)
-        QuickAction(Icons.Outlined.BatteryChargingFull, "Battery", Modifier.weight(1f), onOpenBattery)
-        QuickAction(Icons.Outlined.NetworkPing, "Latency", Modifier.weight(1f), onOpenLatency)
+        QuickAction(Icons.Outlined.BatteryChargingFull, "Battery cost", Modifier.weight(1f), onOpenBattery)
+        QuickAction(Icons.Outlined.NetworkPing, "Latency test", Modifier.weight(1f), onOpenLatency)
     }
 }
 
@@ -374,15 +502,9 @@ private fun QuickAction(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    androidx.compose.material3.ElevatedCard(
-        onClick = onClick,
-        modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
-    ) {
+    ElevatedCard(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(18.dp)) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 18.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -397,7 +519,7 @@ private fun ShizukuWarningCard(status: ShizukuStatus, onOpenWizard: () -> Unit) 
     WarningCard(
         title = "Shizuku not connected",
         message = when (status) {
-            ShizukuStatus.NOT_INSTALLED -> "Install Shizuku to enable privileged, no-root control."
+            ShizukuStatus.NOT_INSTALLED -> "Install Shizuku to enable the checks and one-tap fixes."
             ShizukuStatus.NOT_RUNNING -> "Shizuku is installed but not running. Start it to continue."
             ShizukuStatus.PERMISSION_REQUIRED -> "Grant PulseGuard the Shizuku permission to continue."
             ShizukuStatus.READY -> ""
@@ -408,27 +530,15 @@ private fun ShizukuWarningCard(status: ShizukuStatus, onOpenWizard: () -> Unit) 
 }
 
 @Composable
-private fun ExactAlarmWarningCard(onAction: () -> Unit) {
-    WarningCard(
-        title = "Exact alarms are off",
-        message = "PulseGuard needs the exact-alarm permission for precise timing. Ticks may be delayed until it's granted.",
-        actionLabel = "Fix in setup",
-        onAction = onAction,
-    )
-}
-
-@Composable
 private fun EmptySelectionCard(onOpenApps: () -> Unit) {
     WarningCard(
         title = "No apps selected",
         message = "Pick the apps whose notifications keep arriving late.",
         actionLabel = "Choose apps",
         onAction = onOpenApps,
-        tone = WarningTone.INFO,
+        info = true,
     )
 }
-
-private enum class WarningTone { WARN, INFO }
 
 @Composable
 private fun WarningCard(
@@ -436,19 +546,11 @@ private fun WarningCard(
     message: String,
     actionLabel: String,
     onAction: () -> Unit,
-    tone: WarningTone = WarningTone.WARN,
+    info: Boolean = false,
 ) {
-    val container = when (tone) {
-        WarningTone.WARN -> MaterialTheme.colorScheme.errorContainer
-        WarningTone.INFO -> MaterialTheme.colorScheme.tertiaryContainer
-    }
-    val onContainer = when (tone) {
-        WarningTone.WARN -> MaterialTheme.colorScheme.onErrorContainer
-        WarningTone.INFO -> MaterialTheme.colorScheme.onTertiaryContainer
-    }
-    androidx.compose.material3.Surface(
-        color = container,
-        contentColor = onContainer,
+    Surface(
+        color = if (info) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.errorContainer,
+        contentColor = if (info) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onErrorContainer,
         shape = RoundedCornerShape(20.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -464,6 +566,14 @@ private fun WarningCard(
             Button(onClick = onAction) { Text(actionLabel) }
         }
     }
+}
+
+private fun stateWord(state: CheckState): String = when (state) {
+    CheckState.OK -> "OK"
+    CheckState.WARN -> "Check"
+    CheckState.FAIL -> "Problem"
+    CheckState.UNKNOWN -> "Unknown"
+    CheckState.MANUAL -> "Verify"
 }
 
 private fun plural(n: Int) = if (n == 1) "" else "s"

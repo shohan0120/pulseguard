@@ -16,6 +16,8 @@ fun statusColor(state: CheckState): Color {
         CheckState.WARN -> if (dark) statusWarnDark else statusWarnLight
         CheckState.FAIL -> if (dark) statusFailDark else statusFailLight
         CheckState.UNKNOWN -> if (dark) statusUnknownDark else statusUnknownLight
+        // Manual (unreadable) layers: neutral amber "verify", never a claimed green/red.
+        CheckState.MANUAL -> if (dark) statusWarnDark else statusWarnLight
     }
 }
 

@@ -29,7 +29,19 @@ object DeepLinks {
             FixTarget.APP_DETAILS -> openAppDetails(context, packageName)
             FixTarget.NOTIFICATION_SETTINGS -> openAppNotificationSettings(context, packageName)
             FixTarget.AUTOSTART -> openAutostart(context, packageName)
+            FixTarget.OTHER_PERMISSIONS -> openOtherPermissions(context, packageName)
         }
+    }
+
+    /**
+     * MIUI "Other permissions" editor (Display pop-up in background, etc.). Best-effort — falls
+     * back to the app's details page on non-MIUI or locked-down builds.
+     */
+    fun openOtherPermissions(context: Context, packageName: String) {
+        val intent = Intent("miui.intent.action.APP_PERM_EDITOR")
+            .setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity")
+            .putExtra("extra_pkgname", packageName)
+        start(context, intent) { openAppDetails(context, packageName) }
     }
 
     fun openAppDetails(context: Context, packageName: String) {

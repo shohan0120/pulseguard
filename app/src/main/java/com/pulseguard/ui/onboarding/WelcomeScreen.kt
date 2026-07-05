@@ -56,14 +56,14 @@ fun WelcomeScreen(onGetStarted: () -> Unit) {
             )
         }
         Text(
-            "Late notifications, fixed.",
+            "Keep your protection in place.",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
         )
         Text(
-            "Aggressive battery managers — especially on Xiaomi HyperOS / MIUI — freeze your apps in " +
-                "the background, so chats and emails arrive minutes or hours late. PulseGuard keeps the " +
-                "apps you choose reachable, so notifications land on time.",
+            "On Xiaomi HyperOS / MIUI, the fix for late notifications is the per-app system settings " +
+                "(Autostart, battery, background). PulseGuard's job is to get those right, keep them " +
+                "there, and warn you the moment they lapse — no magic, no overpromising.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -71,18 +71,18 @@ fun WelcomeScreen(onGetStarted: () -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             FeatureRow(
                 Icons.Outlined.NotificationsActive,
-                "On-time notifications",
-                "Periodically wakes your apps so their push connection stays alive.",
+                "Monitor & maintain",
+                "Checks each app's protection layers and one-tap fixes what it can.",
             )
             FeatureRow(
                 Icons.Outlined.BatteryAlert,
-                "Battery-aware",
-                "Skips work while you're using the phone or charging, and eases off at night.",
+                "Watchdog",
+                "Warns you when Shizuku drops after a reboot, and reapplies settings when it returns.",
             )
             FeatureRow(
                 Icons.Outlined.Shield,
-                "No root needed",
-                "Uses Shizuku for safe, privileged access — nothing risky, fully reversible.",
+                "No root, no fake claims",
+                "Uses Shizuku for safe, reversible access — and it's honest about what it can't do.",
             )
         }
 
